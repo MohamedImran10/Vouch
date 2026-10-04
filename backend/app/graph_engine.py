@@ -164,24 +164,77 @@ class GraphEngine:
             cycle_detected=cycle_detected
         )
 
-    def get_full_graph(self) -> Dict[str, List[Dict[str, str]]]:
+    def get_full_graph(self) -> Dict[str, any]:
         """
-        Export the full adjacency list for client-side visualization.
+        Export the full graph structure for client-side visualization.
+        Returns nodes with explicit types/degrees and edges list.
 
         Returns:
-            Dictionary mapping node IDs to lists of edge dictionaries
+            Dictionary with 'nodes' (array of {id, label, type, degree}) and 'edges' (array of {source, target, weight})
         """
-        graph_data = {}
+        # Build node degree map: count connections for each node
+        node_degrees: Dict[str, int] = {}
+        all_nodes: Set[str] = set()
+
+        # Count degrees from adjacency
         for user_id, edges in self.adjacency.items():
-            graph_data[user_id] = [
-                {
-                    "to": provider_id,
-                    "category": edge_data["category"],
-                    "timestamp": edge_data.get("timestamp", "")
-                }
-                for provider_id, edge_data in edges.items()
-            ]
-        return graph_data
+            all_nodes.add(user_id)
+            node_degrees[user_id] = len(edges)
+            for provider_id in edges.keys():
+                all_nodes.add(provider_id)
+                # Also count reverse: if provider has edges coming back
+                if provider_id in self.adjacency:
+                    node_degrees[provider_id] = node_degrees.get(provider_id, 0) + len(
+                        self.adjacency[provider_id]
+                    )
+
+        # Classify node types based on degree
+        def classify_node(node_id: str) -> Tuple[str, int]:
+            """Return (type_label, degree) for a node."""
+            degree = node_degrees.get(node_id, 0)
+            if degree == 0:
+                # Isolated node - check if it's the user's own ID pattern
+                label = node_id.split('_')[0].title() if '_' in node_id else node_id
+                return ("user", 0)
+            elif degree == 1:
+                return ("user", 1)  # 1st degree connection
+            elif degree == 2:
+                return ("user", 2)  # 2nd degree connection
+            else:
+                return ("provider", degree)  # Service provider
+
+        # Build nodes array
+        nodes = []
+        for node_id in all_nodes:
+            node_type, degree = classify_node(node_id)
+            # Determine label
+            if node_id == node_id:  # Will be checked against user_id in caller
+                label = "You" if False else node_id.split('_')[0].title()
+            else:
+                label = node_id.split('_')[0].title()
+            nodes.append({
+                "id": node_id,
+                "label": label,
+                "type": node_type,
+                "degree": degree
+            })
+
+        # Build edges array
+        edges = []
+        seen_edges: Set[str] = set()
+        for from_user, target_edges in self.adjacency.items():
+            for to_provider, edge_data in target_edges.items():
+                edge_key = f"{from_user}->{to_provider}"
+                if edge_key not in seen_edges:
+                    seen_edges.add(edge_key)
+                    edges.append({
+                        "source": from_user,
+                        "target": to_provider,
+                        "weight": 1,
+                        "category": edge_data.get("category", "")
+                    })
+
+        return {"nodes": nodes, "edges": edges}
 
     def get_node_count(self) -> int:
         """Get total number of unique nodes in the graph."""
@@ -189,6 +242,46 @@ class GraphEngine:
         for edges in self.adjacency.values():
             all_nodes.update(edges.keys())
         return len(all_nodes)
+
+    def remove_edge(self, from_user: str, to_provider: str):
+        """Remove a vouch edge and rebuild indexes."""
+        if from_user in self.adjacency and to_provider in self.adjacency[from_user]:
+            edge_data = self.adjacency[from_user][to_provider]
+            category = edge_data.get("category", "")
+            del self.adjacency[from_user][to_provider]
+            if not self.adjacency[from_user]:
+                del self.adjacency[from_user]
+            # Update provider index
+            if to_provider in self.providers and from_user in self.providers[to_provider]:
+                self.providers[to_provider].discard(from_user)
+                if not self.providers[to_provider]:
+                    del self.providers[to_provider]
+            # Update category index
+            if category and category in self.category_map:
+                if to_provider in self.category_map[category] and from_user in self.category_map[category][to_provider]:
+                    self.category_map[category][to_provider].discard(from_user)
+                    if not self.category_map[category][to_provider]:
+                        del self.category_map[category][to_provider]
+                    if not self.category_map[category]:
+                        del self.category_map[category]
+
+    def update_edge(self, from_user: str, to_provider: str, new_category: str = None, timestamp: str = None):
+        """Edit existing vouch edge in-place."""
+        if from_user not in self.adjacency or to_provider not in self.adjacency[from_user]:
+            return False
+        old_data = self.adjacency[from_user][to_provider]
+        old_category = old_data.get("category", "")
+        new_data = {"category": new_category or old_category, "timestamp": timestamp or old_data.get("timestamp", "")}
+        self.adjacency[from_user][to_provider] = new_data
+        # Update category index if changed
+        if new_category and new_category != old_category:
+            if old_category and old_category in self.category_map:
+                if to_provider in self.category_map[old_category] and from_user in self.category_map[old_category][to_provider]:
+                    self.category_map[old_category][to_provider].discard(from_user)
+            if new_category not in self.category_map:
+                self.category_map[new_category] = defaultdict(set)
+            self.category_map[new_category][to_provider].add(from_user)
+        return True
 
     def get_edge_count(self) -> int:
         """Get total number of edges in the graph."""

@@ -53,7 +53,7 @@ class Provider {
 
   factory Provider.fromJson(Map<String, dynamic> json) {
     return Provider(
-      id: json['provider_id'] as String,
+      id: (json['id'] ?? json['provider_id']) as String,
       name: json['provider_name'] as String? ?? json['name'] as String? ?? 'Unknown',
       category: json['category'] as String,
       rating: (json['provider_rating'] ?? json['rating'] ?? 0.0).toDouble(),

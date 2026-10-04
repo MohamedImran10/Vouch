@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
+import '../providers/auth_provider.dart';
+import '../providers/vouch_management_dialog.dart';
 import '../services/api_service.dart';
 import 'search_results_screen.dart';
 import 'network_graph_screen.dart';
@@ -18,8 +20,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showGraphView = false;
   String? _selectedCategory;
 
-  // Mock current user ID - in production, get from auth
-  final String _currentUserId = 'alice';
+  String get _currentUserId =>
+      context.read<AuthProvider>().user?.id ?? 'alice';
 
   @override
   void initState() {
@@ -43,6 +45,48 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<void> _manageVouches() async {
+    if (_categories.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No categories are available yet')),
+      );
+      return;
+    }
+
+    final category = await showDialog<ServiceCategory>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose a category'),
+        children: _categories
+            .map(
+              (category) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, category),
+                child: Text(category.name),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (!mounted || category == null) return;
+
+    final userId = context.read<AuthProvider>().user?.id;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to manage your vouches')),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => VouchManagementDialog(
+        userId: userId,
+        categoryName: category.name,
+        categoryId: category.id,
+      ),
+    );
   }
 
   void _onCategoryTap(String categoryId) {
@@ -82,6 +126,11 @@ class _HomeScreenState extends State<HomeScreen> {
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.thumb_up),
+            tooltip: 'Manage my vouches',
+            onPressed: _manageVouches,
+          ),
           IconButton(
             icon: Icon(_showGraphView ? Icons.list : Icons.account_tree),
             tooltip: _showGraphView ? 'List View' : 'Graph View',

@@ -41,6 +41,78 @@ def test_health_check(client):
     assert "graph_edges" in data
 
 
+def test_register_user_returns_timestamps(client):
+    """Registration should include created_at and updated_at in the nested user payload."""
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "new_user@example.com",
+            "name": "New User",
+            "password": "StrongPass1!",
+            "phone": "1234567890"
+        }
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert "user" in data
+    assert data["user"]["email"] == "new_user@example.com"
+    assert "created_at" in data["user"]
+    assert "updated_at" in data["user"]
+    assert data["user"]["created_at"]
+    assert data["user"]["updated_at"]
+
+
+def test_login_accepts_any_email_and_password(client):
+    """Local development mode should allow any email/password combination to sign in."""
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "email": "any-email@example.com",
+            "password": "anything"
+        }
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert "access_token" in data
+    assert data["user"]["email"] == "any-email@example.com"
+
+
+def test_connection_crud_by_category(client):
+    """Connections can be created, listed, updated, and deleted by category."""
+    payload = {
+        "name": "Metro Electric",
+        "category": "electrician",
+        "email": "metro@example.com",
+        "phone": "555-0101",
+        "description": "24/7 electrical repair"
+    }
+
+    created = client.post("/api/connections", json=payload)
+    assert created.status_code == 201, created.text
+    data = created.json()
+    assert data["name"] == payload["name"]
+    assert data["category"] == payload["category"]
+    connection_id = data["id"]
+
+    listed = client.get("/api/connections?category=electrician")
+    assert listed.status_code == 200, listed.text
+    items = listed.json()
+    assert any(item["id"] == connection_id for item in items)
+
+    updated = client.put(
+        f"/api/connections/{connection_id}",
+        json={"name": "Metro Electric Plus", "description": "Updated details"}
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "Metro Electric Plus"
+
+    deleted = client.delete(f"/api/connections/{connection_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["success"] is True
+
+
 def test_search_providers_plumber(client):
     """Test BFS search for plumbers."""
     response = client.get("/api/search?user_id=alice&category=plumber")
@@ -142,6 +214,111 @@ def test_create_vouch(client):
 
     assert data["status"] == "success"
     assert "vouch_id" in data
+
+
+def test_vouch_persistence_crud_and_filters():
+    """Mock persistence supports the complete vouch CRUD lifecycle."""
+    from app.firebase_service import FirebaseService
+
+    service = FirebaseService()
+    service.use_mock = True
+    service.mock_vouches = []
+
+    vouch_id = service.save_vouch({
+        "from_user_id": "test_user",
+        "to_provider_id": "test_provider",
+        "category": "plumber",
+        "message": "Reliable work",
+        "rating": 5,
+    })
+
+    created = service.load_vouch_by_id(vouch_id)
+    assert created is not None
+    assert created["to_provider_id"] == "test_provider"
+    assert service.load_vouches(category="plumber", user_id="test_user") == [created]
+    assert service.load_vouches(category="electrician") == []
+
+    assert service.update_vouch(vouch_id, {"message": "Updated note", "rating": 4})
+    updated = service.load_vouch_by_id(vouch_id)
+    assert updated is not None
+    assert updated["message"] == "Updated note"
+    assert updated["rating"] == 4
+
+    assert service.delete_vouch(vouch_id)
+    assert service.load_vouch_by_id(vouch_id) is None
+    assert not service.delete_vouch(vouch_id)
+
+
+def test_vouch_routes_support_provider_rating_note_and_graph_crud(client):
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "react-crud@example.com", "password": "demo"},
+    )
+    assert login.status_code == 200, login.text
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    plumber = client.post(
+        "/api/providers",
+        headers=headers,
+        json={"name": "Route Test Plumbing", "category": "plumber"},
+    )
+    mechanic = client.post(
+        "/api/providers",
+        headers=headers,
+        json={"name": "Route Test Garage", "category": "mechanic"},
+    )
+    assert plumber.status_code == 201, plumber.text
+    assert mechanic.status_code == 201, mechanic.text
+
+    created = client.post(
+        "/api/vouches",
+        headers=headers,
+        json={
+            "to_provider_id": plumber.json()["id"],
+            "category": "plumber",
+            "rating": 5,
+            "message": "Clear estimate and careful work.",
+        },
+    )
+    assert created.status_code == 201, created.text
+    vouch_id = created.json()["id"]
+    assert created.json()["rating"] == 5
+
+    plumber_list = client.get("/api/vouches?user_id=react-crud&category=plumber")
+    assert plumber_list.status_code == 200, plumber_list.text
+    assert [item["id"] for item in plumber_list.json()] == [vouch_id]
+    assert plumber_list.json()[0]["message"] == "Clear estimate and careful work."
+
+    updated = client.put(
+        f"/api/vouches/{vouch_id}",
+        headers=headers,
+        json={
+            "to_provider_id": mechanic.json()["id"],
+            "category": "mechanic",
+            "rating": 4,
+            "message": "Updated recommendation.",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["to_provider_id"] == mechanic.json()["id"]
+    assert updated.json()["rating"] == 4
+
+    graph_edges = client.get("/api/graph/full").json()["edges"]
+    assert not any(edge["target"] == plumber.json()["id"] for edge in graph_edges)
+    assert any(
+        edge["source"] == "react-crud" and edge["target"] == mechanic.json()["id"]
+        for edge in graph_edges
+    )
+
+    deleted = client.delete(f"/api/vouches/{vouch_id}", headers=headers)
+    assert deleted.status_code == 200, deleted.text
+    mechanic_list = client.get("/api/vouches?user_id=react-crud&category=mechanic")
+    assert mechanic_list.status_code == 200, mechanic_list.text
+    assert mechanic_list.json() == []
+
+    for provider in (plumber.json(), mechanic.json()):
+        response = client.delete(f"/api/providers/{provider['id']}", headers=headers)
+        assert response.status_code == 200, response.text
 
 
 def test_get_categories(client):

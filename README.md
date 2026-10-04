@@ -12,8 +12,8 @@ A real-time Trust Network mobile and web application for an academic mini-projec
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   Flutter Frontend                       │
-│  (Mobile: Android/iOS, Web: Chrome/Safari)              │
+│                     React Frontend                       │
+│  (Web: responsive Vouch dashboard and trust network)    │
 │                                                          │
 │  - Home Screen (Category Browser)                       │
 │  - Search Results (BFS Rankings)                        │
@@ -69,13 +69,16 @@ A real-time Trust Network mobile and web application for an academic mini-projec
 - **Mock data fallback** for Firebase-free development
 - **Deployment configs** (Render, Docker)
 
-### Phase 3: Flutter Core Screens ✅
-- **HomeScreen**: Category browser with view mode toggle
-- **SearchResultsScreen**: BFS results with degree badges
-- **NetworkGraphScreen**: Interactive graph visualization
-- **TrustPathModal**: DFS path timeline
-- **Models & Services**: Complete data layer
-- **Material Design 3**: Modern, accessible UI
+### React Web Frontend
+- **Vouch ledger**: Create, edit, rate, annotate, and delete recommendations
+- **Flexible provider naming**: Select an existing provider or create one by name
+- **Trust network**: Color-coded, force-directed graph with category filters
+- **BFS search**: Rank providers by shortest trust distance
+- **DFS trace**: Highlight the exact path to a selected person or provider
+- **Responsive workspace**: Overview, vouch management, and network inspector
+
+### Flutter Mobile App
+- Existing Android, iOS, and Linux app remains in `frontend/`
 
 ## 📊 Graph Theory Algorithms
 
@@ -115,7 +118,15 @@ Vouch/
 │   ├── render.yaml
 │   └── README.md
 │
-├── frontend/                   # Flutter Mobile/Web App
+├── frontend-react/             # React web dashboard
+│   ├── src/
+│   │   ├── App.jsx             # Vouch overview and graph tools
+│   │   ├── NetworkGraph.jsx     # Interactive trust network
+│   │   ├── VouchForm.jsx        # Vouch create/update form
+│   │   └── graphAlgorithms.js  # Client-side BFS and DFS
+│   └── package.json
+│
+├── frontend/                   # Flutter mobile app
 │   ├── lib/
 │   │   ├── main.dart          # App entry
 │   │   ├── models/
@@ -143,12 +154,10 @@ Vouch/
 - **pytest** - Testing framework
 
 ### Frontend
-- **Flutter 3.47.4** - Cross-platform framework
-- **Dart 3.13** - Programming language
-- **Provider** - State management
-- **graphview** - Network graph visualization
-- **http** - API client
-- **Material Design 3** - UI components
+- **React 19** and **Vite** - Web dashboard
+- **D3 Force** - Network graph layout
+- **Lucide** - Interface icons
+- **Flutter 3.47.4** - Existing mobile clients
 
 ### Database (Optional)
 - **Cloud Firestore** - NoSQL cloud database
@@ -170,22 +179,24 @@ pytest tests/ -v
 uvicorn app.main:app --reload
 ```
 
-Backend runs at `http://localhost:8000` with interactive docs at `/docs`
+Backend runs at `http://localhost:8001` with interactive docs at `/docs`
 
-### 2. Start Frontend
+### 2. Start React Web Frontend
+
+```bash
+cd frontend-react
+npm install
+npm run dev
+```
+
+Open the URL printed by Vite (typically `http://localhost:5173`). The sign-in form is prefilled for the local demo network.
+
+### 3. Run the Flutter Mobile App
 
 ```bash
 cd frontend
 flutter pub get
-
-# Run on web
-flutter run -d chrome
-
-# Run on Android
 flutter run
-
-# Build release APK
-flutter build apk --release
 ```
 
 ## 📱 Screenshots & Demo Flow

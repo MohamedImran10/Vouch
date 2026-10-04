@@ -1,16 +1,19 @@
 """
 FastAPI Backend for Vouch Trust Network
-Provides graph search endpoints powered by BFS, DFS, and Hash Maps.
+Provides graph search, CRUD operations, and authentication
 """
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
 
-from app.graph_engine import GraphEngine, SearchResult, TrustPath
-from app.firebase_service import FirebaseService
+from app.graph_engine import SearchResult, TrustPath
+from app.services import firebase_service, graph_engine
+from app.auth import get_current_user
+from app.routers import auth, users, providers, reviews, connections
+from app.routers import vouches as vouch_router
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +21,7 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI(
     title="Vouch API",
-    description="Real-time Trust Network API powered by Graph Theory",
+    description="Real-time Trust Network API powered by Graph Theory with Authentication",
     version="1.0.0"
 )
 
@@ -31,12 +34,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global graph engine and Firebase service
-graph_engine = GraphEngine()
-firebase_service = FirebaseService()
+# ============================================================================
+# Include Routers
+# ============================================================================
+
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(providers.router)
+app.include_router(reviews.router)
+app.include_router(connections.router)
+app.include_router(vouch_router.router)
 
 
-# Pydantic models for request/response
+# Pydantic models for legacy endpoints
 class VouchRequest(BaseModel):
     from_user: str
     to_provider: str
@@ -87,8 +97,8 @@ async def startup_event():
 
     for vouch in vouches:
         graph_engine.add_edge(
-            from_user=vouch["from_user"],
-            to_provider=vouch["to_provider"],
+            from_user=vouch.get("from_user_id", vouch.get("from_user", "")),
+            to_provider=vouch.get("to_provider_id", vouch.get("to_provider", "")),
             category=vouch["category"],
             timestamp=vouch.get("timestamp", "")
         )
@@ -96,6 +106,10 @@ async def startup_event():
     print(f"✅ Loaded {len(vouches)} vouches into graph")
     print(f"📊 Graph: {graph_engine.get_node_count()} nodes, {graph_engine.get_edge_count()} edges")
 
+
+# ============================================================================
+# Public Endpoints (No Auth Required)
+# ============================================================================
 
 @app.get("/")
 async def root():
@@ -105,7 +119,7 @@ async def root():
     return {
         "app": "Vouch Trust Network API",
         "version": "1.0.0",
-        "description": "Graph Theory-powered social proximity search",
+        "description": "Graph Theory-powered social proximity search with Authentication",
         "endpoints": {
             "health": "/health",
             "api_docs": "/docs",
@@ -113,7 +127,14 @@ async def root():
             "trust_path": "/api/trust-path",
             "graph": "/api/graph/full",
             "vouch": "/api/vouch",
-            "categories": "/api/categories"
+            "categories": "/api/categories",
+            "auth_register": "/api/auth/register",
+            "auth_login": "/api/auth/login",
+            "auth_logout": "/api/auth/logout",
+            "auth_me": "/api/auth/me",
+            "users": "/api/users",
+            "providers": "/api/providers",
+            "reviews": "/api/reviews"
         },
         "graph_stats": {
             "nodes": graph_engine.get_node_count(),
@@ -133,6 +154,10 @@ async def health_check():
         "graph_edges": graph_engine.get_edge_count()
     }
 
+
+# ============================================================================
+# Graph Search Endpoints (Original Features)
+# ============================================================================
 
 @app.get("/api/search", response_model=List[SearchResponse])
 async def search_providers(
@@ -188,38 +213,38 @@ async def get_trust_path(
     }
 
 
-@app.get("/api/graph/full", response_model=FullGraphResponse)
+@app.get("/api/graph/full")
 async def get_full_graph():
     """
     Export full graph structure for client-side visualization.
-    Returns adjacency list with all nodes and edges.
+    Returns nodes with explicit types/degrees and edges list.
     """
     graph_data = graph_engine.get_full_graph()
 
-    # Convert to response format
-    formatted_nodes = {}
-    for node_id, edges in graph_data.items():
-        formatted_nodes[node_id] = [
-            GraphNode(
-                to=edge["to"],
-                category=edge["category"],
-                timestamp=edge["timestamp"]
-            )
-            for edge in edges
-        ]
+    # graph_data is {"nodes": [...], "edges": [...]}
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+
+    # Build node lookup by ID for type/degree info
+    node_lookup = {node["id"]: node for node in nodes}
 
     return {
-        "nodes": formatted_nodes,
-        "node_count": graph_engine.get_node_count(),
-        "edge_count": graph_engine.get_edge_count()
+        "nodes": nodes,
+        "edges": edges,
+        "node_count": len(nodes),
+        "edge_count": len(edges)
     }
 
 
+# ============================================================================
+# Legacy vouch endpoint - backward compatibility
+# ============================================================================
+
 @app.post("/api/vouch")
-async def create_vouch(vouch: VouchRequest):
+async def create_vouch_legacy(vouch: VouchRequest):
     """
+    Legacy vouch endpoint for backward compatibility.
     Submit a new vouch (endorsement).
-    Adds an edge to the graph and persists to Firebase.
     """
     # Add to graph
     graph_engine.add_edge(
@@ -244,6 +269,10 @@ async def create_vouch(vouch: VouchRequest):
     }
 
 
+# ============================================================================
+# Categories Endpoint
+# ============================================================================
+
 @app.get("/api/categories")
 async def get_categories():
     """
@@ -258,6 +287,11 @@ async def get_categories():
             {"id": "cleaner", "name": "Cleaners", "icon": "🧹"}
         ]
     }
+
+
+# ============================================================================
+# Error Handlers
+# ============================================================================
 
 
 if __name__ == "__main__":
