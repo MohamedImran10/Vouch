@@ -57,16 +57,21 @@ class FirebaseService:
         """Generate realistic mock vouch data for testing."""
         return [
             # Alice's network
-            {"from_user": "alice", "to_provider": "bob_plumber", "category": "plumber", "timestamp": "2024-01-01"},
             {"from_user": "alice", "to_provider": "carol", "category": "friend", "timestamp": "2024-01-02"},
+            {"from_user": "alice", "to_provider": "bob_plumber", "category": "plumber", "timestamp": "2024-01-01"},
 
             # Carol's network
             {"from_user": "carol", "to_provider": "dave_mechanic", "category": "mechanic", "timestamp": "2024-01-03"},
             {"from_user": "carol", "to_provider": "eve_plumber", "category": "plumber", "timestamp": "2024-01-04"},
+            {"from_user": "carol", "to_provider": "grace_electrician", "category": "electrician", "timestamp": "2024-01-04T12:00:00"},
             {"from_user": "carol", "to_provider": "frank", "category": "friend", "timestamp": "2024-01-05"},
+            {"from_user": "carol", "to_provider": "bob_plumber", "category": "plumber", "timestamp": "2024-01-05T12:00:00"},
 
             # Bob's network
             {"from_user": "bob_plumber", "to_provider": "grace_electrician", "category": "electrician", "timestamp": "2024-01-06"},
+
+            # Alice also has a direct route to Grace; DFS reaches Grace through Carol first.
+            {"from_user": "alice", "to_provider": "grace_electrician", "category": "electrician", "timestamp": "2024-01-06T12:00:00"},
 
             # Frank's network
             {"from_user": "frank", "to_provider": "henry_babysitter", "category": "babysitter", "timestamp": "2024-01-07"},

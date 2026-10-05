@@ -120,6 +120,21 @@ def test_dfs_second_degree_path(sample_graph):
     assert path_result.path == ["alice", "carol", "dave_mechanic"]
 
 
+def test_dfs_all_category_aliases_bypass_filtering(sample_graph):
+    for category in ("all", "ALL", "Every category", ""):
+        path_result = sample_graph.dfs_trust_path("alice", "dave_mechanic", category)
+        assert path_result.valid is True
+        assert path_result.path == ["alice", "carol", "dave_mechanic"]
+
+
+def test_graph_node_types_follow_service_vouches(sample_graph):
+    nodes = {node["id"]: node for node in sample_graph.get_full_graph()["nodes"]}
+    assert nodes["alice"]["type"] == "person"
+    assert nodes["carol"]["type"] == "person"
+    assert nodes["bob_plumber"]["type"] == "provider"
+    assert nodes["dave_mechanic"]["type"] == "provider"
+
+
 def test_dfs_no_path(sample_graph):
     """Test DFS returns invalid when no path exists."""
     path_result = sample_graph.dfs_trust_path("alice", "nonexistent_provider")

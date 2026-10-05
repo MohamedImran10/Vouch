@@ -199,6 +199,27 @@ def test_get_full_graph(client):
     assert data["edge_count"] > 0
 
 
+def test_full_graph_uses_signed_in_user_as_mock_root(client):
+    """The seeded Alice network should be rooted at the signed-in demo account."""
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "imran@example.com", "password": "anything"},
+    )
+    token = login.json()["access_token"]
+
+    response = client.get(
+        "/api/graph/full",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    node_ids = {node["id"] for node in data["nodes"]}
+
+    assert "imran" in node_ids
+    assert "alice" not in node_ids
+    assert any(edge["source"] == "imran" and edge["target"] == "carol" for edge in data["edges"])
+
+
 def test_create_vouch(client):
     """Test vouch creation endpoint."""
     vouch_data = {

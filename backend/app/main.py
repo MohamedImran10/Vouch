@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from app.graph_engine import SearchResult, TrustPath
 from app.services import firebase_service, graph_engine
-from app.auth import get_current_user
+from app.auth import get_current_user, get_optional_user
 from app.routers import auth, users, providers, reviews, connections
 from app.routers import vouches as vouch_router
 
@@ -194,7 +194,8 @@ async def search_providers(
 @app.get("/api/trust-path", response_model=TrustPathResponse)
 async def get_trust_path(
     from_id: str = Query(..., description="Starting user ID"),
-    to_id: str = Query(..., description="Target provider ID")
+    to_id: str = Query(..., description="Target provider ID"),
+    category: Optional[str] = Query(None, description="Optional service category filter")
 ):
     """
     DFS-powered trust path verification.
@@ -204,7 +205,7 @@ async def get_trust_path(
         raise HTTPException(status_code=400, detail="from_id and to_id are required")
 
     # Execute DFS path tracing
-    trust_path = graph_engine.dfs_trust_path(from_id, to_id)
+    trust_path = graph_engine.dfs_trust_path(from_id, to_id, category)
 
     return {
         "path": trust_path.path,
@@ -214,7 +215,7 @@ async def get_trust_path(
 
 
 @app.get("/api/graph/full")
-async def get_full_graph():
+async def get_full_graph(current_user: Optional[dict] = Depends(get_optional_user)):
     """
     Export full graph structure for client-side visualization.
     Returns nodes with explicit types/degrees and edges list.
@@ -225,8 +226,22 @@ async def get_full_graph():
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
 
-    # Build node lookup by ID for type/degree info
-    node_lookup = {node["id"]: node for node in nodes}
+    # The mock network is seeded for Alice; present that root as the signed-in demo user.
+    user_id = current_user.get("user_id") if current_user else None
+    node_ids = {node["id"] for node in nodes}
+    if firebase_service.use_mock and user_id and user_id != "alice" and user_id not in node_ids:
+        nodes = [
+            {**node, "id": user_id} if node["id"] == "alice" else node
+            for node in nodes
+        ]
+        edges = [
+            {
+                **edge,
+                "source": user_id if edge["source"] == "alice" else edge["source"],
+                "target": user_id if edge["target"] == "alice" else edge["target"],
+            }
+            for edge in edges
+        ]
 
     return {
         "nodes": nodes,

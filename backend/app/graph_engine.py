@@ -113,7 +113,7 @@ class GraphEngine:
         results.sort(key=lambda r: r.degree)
         return results
 
-    def dfs_trust_path(self, from_user: str, to_provider: str) -> TrustPath:
+    def dfs_trust_path(self, from_user: str, to_provider: str, category: Optional[str] = None) -> TrustPath:
         """
         Execute Depth-First Search to trace a trust path.
         Includes cycle detection.
@@ -121,6 +121,7 @@ class GraphEngine:
         Args:
             from_user: Starting user ID
             to_provider: Target provider ID
+            category: Optional service category filter; all-category aliases bypass filtering
 
         Returns:
             TrustPath object with path and validation status
@@ -128,6 +129,8 @@ class GraphEngine:
         visited = set()
         rec_stack = set()  # For cycle detection
         path = []
+        normalized_category = (category or "").strip().lower()
+        filter_category = normalized_category not in {"", "all", "every category"}
 
         def dfs_helper(current: str, target: str) -> bool:
             """Recursive DFS helper with cycle detection."""
@@ -144,7 +147,10 @@ class GraphEngine:
 
             # Explore neighbors
             if current in self.adjacency:
-                for neighbor in self.adjacency[current].keys():
+                for neighbor, edge_data in self.adjacency[current].items():
+                    edge_category = edge_data.get("category", "").lower()
+                    if filter_category and edge_category not in {normalized_category, "friend"}:
+                        continue
                     if neighbor not in visited or neighbor == target:
                         if dfs_helper(neighbor, target):
                             return True
@@ -188,30 +194,25 @@ class GraphEngine:
                         self.adjacency[provider_id]
                     )
 
-        # Classify node types based on degree
+        provider_ids = {
+            target_id
+            for source_edges in self.adjacency.values()
+            for target_id, edge_data in source_edges.items()
+            if edge_data.get("category", "").lower() != "friend"
+        }
+
+        # Provider identity comes from service vouches, not connection count.
         def classify_node(node_id: str) -> Tuple[str, int]:
             """Return (type_label, degree) for a node."""
             degree = node_degrees.get(node_id, 0)
-            if degree == 0:
-                # Isolated node - check if it's the user's own ID pattern
-                label = node_id.split('_')[0].title() if '_' in node_id else node_id
-                return ("user", 0)
-            elif degree == 1:
-                return ("user", 1)  # 1st degree connection
-            elif degree == 2:
-                return ("user", 2)  # 2nd degree connection
-            else:
-                return ("provider", degree)  # Service provider
+            return ("provider" if node_id in provider_ids else "person", degree)
 
         # Build nodes array
         nodes = []
         for node_id in all_nodes:
             node_type, degree = classify_node(node_id)
             # Determine label
-            if node_id == node_id:  # Will be checked against user_id in caller
-                label = "You" if False else node_id.split('_')[0].title()
-            else:
-                label = node_id.split('_')[0].title()
+            label = node_id.split('_')[0].title()
             nodes.append({
                 "id": node_id,
                 "label": label,

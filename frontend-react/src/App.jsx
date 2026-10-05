@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Component, useEffect, useState } from 'react'
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -25,6 +25,21 @@ import { breadthFirstSearch, depthFirstSearch } from './graphAlgorithms'
 import './App.css'
 
 const userStorageKey = 'vouch.currentUser'
+
+class GraphErrorBoundary extends Component {
+  state = { hasError: false }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="graph-empty" role="alert"><strong>Unable to render graph path</strong><span>Try selecting the destination again.</span></div>
+    }
+    return this.props.children
+  }
+}
 
 function readSession() {
   const token = getAccessToken()
@@ -185,10 +200,11 @@ function App() {
       for (const edge of nextGraph.edges || []) {
         if (edge.category !== 'friend' && !providerCategory.has(edge.target)) providerCategory.set(edge.target, edge.category)
       }
+      const providerById = new Map(nextProviders.map((provider) => [provider.id, provider]))
       const nextNodes = (nextGraph.nodes || []).map((node) => ({
         ...node,
-        type: providerCategory.has(node.id) ? 'provider' : 'user',
-        category: providerCategory.get(node.id),
+        type: providerById.has(node.id) || providerCategory.has(node.id) || node.type === 'provider' ? 'provider' : 'person',
+        category: providerCategory.get(node.id) || providerById.get(node.id)?.category || node.category,
       }))
       setCategories(nextCategories)
       setProviders(nextProviders)
@@ -246,18 +262,38 @@ function App() {
   }
 
   function runBfs() {
-    const result = breadthFirstSearch(graph, session.user.id, category)
-    setTraversal({ mode: 'BFS', order: result.order, edgeKeys: result.treeEdges.map((edge) => `${edge.source}->${edge.target}`), providers: result.providers })
-    if (!selectedNode && result.providers[0]) setSelectedNode(result.providers[0].id)
+    const result = breadthFirstSearch(graph, session.user.id, category, selectedNode)
+    const targetPathFound = !selectedNode || result.targetPath.length > 0
+    const targetPath = targetPathFound ? result.targetPath : []
+    const highlightedEdges = selectedNode
+      ? result.targetPath.slice(1).map((id, index) => `${result.targetPath[index]}->${id}`)
+      : []
+    setTraversal({ mode: 'BFS', traversalOrder: result.order, edgeKeys: highlightedEdges, providers: result.providers, targetId: selectedNode, targetPath })
     flash(`Breadth-first search reached ${result.order.length} people and providers.`)
   }
 
   function runDfs() {
     if (!selectedNode) return
-    const result = depthFirstSearch(graph, session.user.id, selectedNode, category)
-    const edgeKeys = result.path.slice(1).map((id, index) => `${result.path[index]}->${id}`)
-    setTraversal({ mode: 'DFS', order: result.visited, edgeKeys, path: result.path, found: result.found, cycleDetected: result.cycleDetected })
-    flash(result.found ? `Trust path found in ${Math.max(result.path.length - 1, 0)} step${result.path.length === 2 ? '' : 's'}.` : 'No trust path to that node in the selected category.')
+    const target = graph.nodes.find((node) => node.id === selectedNode)
+    if (!target) {
+      setTraversal(null)
+      flash('Choose a destination in the current network.')
+      return
+    }
+    const result = depthFirstSearch(graph, session.user.id, target.id, category)
+    const targetPath = Array.isArray(result?.path)
+      ? result.path
+      : Array.isArray(result?.path?.nodes) ? result.path.nodes : []
+    const edgeKeys = []
+    for (let index = 0; index < targetPath.length - 1; index += 1) {
+      const currentNode = targetPath[index]
+      const nextNode = targetPath[index + 1]
+      if (!currentNode || !nextNode) continue
+      edgeKeys.push(`${currentNode}->${nextNode}`)
+    }
+    const found = Boolean(result?.found && targetPath.length)
+    setTraversal({ mode: 'DFS', traversalOrder: result?.visited || [], edgeKeys, targetPath, found, cycleDetected: result?.cycleDetected })
+    flash(found ? `Trust path found in ${Math.max(targetPath.length - 1, 0)} step${targetPath.length === 2 ? '' : 's'}.` : 'No trust path to that node in the selected category.')
   }
 
   if (!session) return <LoginScreen onLogin={login} />
@@ -275,6 +311,9 @@ function App() {
   const filteredGraphNodes = category === 'all'
     ? graph.nodes
     : graph.nodes.filter((node) => filteredGraphNodeIds.has(node.id) || node.id === session.user.id)
+  const traversalPath = Array.isArray(traversal?.targetPath)
+    ? traversal.targetPath
+    : Array.isArray(traversal?.targetPath?.nodes) ? traversal.targetPath.nodes : []
 
   return (
     <div className="app-shell">
@@ -341,13 +380,13 @@ function App() {
 
               <section className="network-workspace">
                 <div className="network-visual-panel">
-                  {loading ? <div className="graph-loading"><span className="spinner spinner-dark" />Refreshing network…</div> : <NetworkGraph nodes={filteredGraphNodes} edges={filteredGraphEdges} providers={providers} rootId={session.user.id} category={category} activeEdgeKeys={traversal?.edgeKeys || []} visitOrder={traversal?.order || []} selectedNode={selectedNode} onSelectNode={setSelectedNode} />}
+                  {loading ? <div className="graph-loading"><span className="spinner spinner-dark" />Refreshing network…</div> : <GraphErrorBoundary><NetworkGraph nodes={filteredGraphNodes} edges={filteredGraphEdges} providers={providers} rootId={session.user.id} category={category} activeEdgeKeys={traversal?.edgeKeys || []} targetPath={traversalPath} selectedNode={selectedNode} onSelectNode={setSelectedNode} /></GraphErrorBoundary>}
                 </div>
                 <aside className="graph-inspector">
                   <div className="inspector-head"><span className="eyebrow">NETWORK TOOLS</span><strong>Trace a connection</strong><p>Choose a traversal to understand how recommendations move through your circle.</p></div>
                   <div className="algorithm-toggle" role="group" aria-label="Graph traversal algorithm"><button aria-pressed={algorithm === 'BFS'} className={algorithm === 'BFS' ? 'algorithm-button active' : 'algorithm-button'} onClick={() => { setAlgorithm('BFS'); setTraversal(null) }}><GitBranch size={15} />BFS</button><button aria-pressed={algorithm === 'DFS'} className={algorithm === 'DFS' ? 'algorithm-button active' : 'algorithm-button'} onClick={() => { setAlgorithm('DFS'); setTraversal(null) }}><Compass size={15} />DFS</button></div>
                   <p className="algorithm-note"><strong>{algorithm === 'DFS' ? 'Depth-first search' : 'Breadth-first search'}</strong>{algorithm === 'DFS' ? ' follows one route deeply, then backtracks to trace a selected connection.' : ' explores nearby connections first, ranking providers by the shortest trust distance.'}</p>
-                  <label className="field-label" htmlFor="target-node">{algorithm === 'DFS' ? 'Trace to a person or provider' : 'Target for path context'}</label>
+                  <label className="field-label" htmlFor="target-node">{algorithm === 'DFS' ? 'Trace to a person or provider' : 'Target for shortest path (optional)'}</label>
                   <select id="target-node" className="target-select" onChange={(event) => setSelectedNode(event.target.value)} value={selectedNode}>
                     <option value="">Choose a node…</option>
                     {filteredGraphNodes.filter((node) => node.id !== session.user.id).map((node) => <option key={node.id} value={node.id}>{providers.find((provider) => provider.id === node.id)?.name || node.label || nameFromId(node.id)}</option>)}
@@ -357,10 +396,10 @@ function App() {
                   </button>
                   {traversal && <div className="traversal-results">
                     <div className="result-heading"><span>{traversal.mode === 'BFS' ? 'CLOSEST PROVIDERS' : 'TRUST PATH'}</span><button className="icon-button" title="Clear traversal" onClick={() => setTraversal(null)}><X size={14} /></button></div>
-                    {traversal.mode === 'BFS' ? traversal.providers.length ? traversal.providers.map((result, index) => {
+                    {traversal.mode === 'BFS' ? traversal.targetId ? traversalPath.length ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> SHORTEST TRUST PATH</span><div className="path-timeline">{traversalPath.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversalPath.length - 1 ? ' path-destination' : ''}`} />{index < traversalPath.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversalPath.length - 1 ? 'Selected destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversalPath.length - 1} {traversalPath.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects to the selected node in this category.</p> : traversal.providers.length ? traversal.providers.map((result, index) => {
                       const providerName = providers.find((provider) => provider.id === result.id)?.name || nameFromId(result.id)
                       return <button className="path-result" key={result.id} onClick={() => setSelectedNode(result.id)}><span className="result-rank">{String(index + 1).padStart(2, '0')}</span><span><strong>{providerName}</strong><small>{result.distance} {result.distance === 1 ? 'step' : 'steps'} · {result.path.map((id) => id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)).join(' → ')}</small></span><ArrowUpRight size={15} /></button>
-                    }) : <p className="no-results">No providers are reachable in this category yet.</p> : traversal.found ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> VERIFIED TRUST PATH</span><div className="path-timeline">{traversal.path.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversal.path.length - 1 ? ' path-destination' : ''}`} />{index < traversal.path.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversal.path.length - 1 ? 'Trusted destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversal.path.length - 1} {traversal.path.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects these nodes in the selected category.</p>}
+                    }) : <p className="no-results">No providers are reachable in this category yet.</p> : traversal.found && traversalPath.length ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> VERIFIED TRUST PATH</span><div className="path-timeline">{traversalPath.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversalPath.length - 1 ? ' path-destination' : ''}`} />{index < traversalPath.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversalPath.length - 1 ? 'Trusted destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversalPath.length - 1} {traversalPath.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects these nodes in the selected category.</p>}
                   </div>}
                   {!traversal && <div className="inspector-footnote"><ShieldCheck size={15} /><span>Paths are calculated from the current network edges and respect your category filter.</span></div>}
                 </aside>

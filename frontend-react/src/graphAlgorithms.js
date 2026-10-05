@@ -1,6 +1,12 @@
 function eligibleEdges(edges, category) {
-  if (!category || category === 'all') return edges
-  return edges.filter((edge) => edge.category === 'friend' || edge.category === category)
+  const normalizedCategory = category?.trim().toLowerCase()
+  if (!normalizedCategory || normalizedCategory === 'all' || normalizedCategory === 'every category') return edges
+  return edges.filter((edge) => edge.category?.toLowerCase() === 'friend' || edge.category?.toLowerCase() === normalizedCategory)
+}
+
+function includesAllCategories(category) {
+  const normalizedCategory = category?.trim().toLowerCase()
+  return !normalizedCategory || normalizedCategory === 'all' || normalizedCategory === 'every category'
 }
 
 function adjacencyFor(edges, category) {
@@ -12,7 +18,7 @@ function adjacencyFor(edges, category) {
   return adjacency
 }
 
-export function breadthFirstSearch(graph, startId, category = 'all') {
+export function breadthFirstSearch(graph, startId, category = 'all', targetId = '') {
   const adjacency = adjacencyFor(graph.edges, category)
   const distance = new Map([[startId, 0]])
   const parent = new Map()
@@ -33,7 +39,7 @@ export function breadthFirstSearch(graph, startId, category = 'all') {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
   const providers = queue
     .filter((id) => id !== startId && nodesById.get(id)?.type === 'provider')
-    .filter((id) => category === 'all' || nodesById.get(id)?.category === category)
+    .filter((id) => includesAllCategories(category) || nodesById.get(id)?.category?.toLowerCase() === category.trim().toLowerCase())
     .map((id) => {
       const path = [id]
       let cursor = id
@@ -45,7 +51,22 @@ export function breadthFirstSearch(graph, startId, category = 'all') {
     })
     .sort((left, right) => left.distance - right.distance)
 
-  return { order, providers, distance, treeEdges: [...parent.values()].map((entry) => entry.edge) }
+  const targetPath = []
+  let cursor = targetId
+  while (targetId && distance.has(cursor)) {
+    targetPath.unshift(cursor)
+    if (cursor === startId) break
+    cursor = parent.get(cursor)?.node
+    if (!cursor) targetPath.length = 0
+  }
+
+  return {
+    order,
+    providers,
+    distance,
+    targetPath,
+    treeEdges: [...parent.values()].map((entry) => entry.edge),
+  }
 }
 
 export function depthFirstSearch(graph, startId, targetId, category = 'all') {

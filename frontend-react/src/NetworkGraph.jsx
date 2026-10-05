@@ -36,7 +36,7 @@ export default function NetworkGraph({
   rootId,
   category,
   activeEdgeKeys,
-  visitOrder,
+  targetPath,
   selectedNode,
   onSelectNode,
 }) {
@@ -44,8 +44,21 @@ export default function NetworkGraph({
   const [size, setSize] = useState({ width: 920, height: 560 })
   const [positions, setPositions] = useState([])
   const providerIds = useMemo(() => new Set(edges.filter((edge) => edge.category !== 'friend').map((edge) => edge.target)), [edges])
-  const activeEdges = useMemo(() => new Set(activeEdgeKeys), [activeEdgeKeys])
-  const visits = useMemo(() => new Set(visitOrder), [visitOrder])
+  const path = Array.isArray(targetPath)
+    ? targetPath
+    : Array.isArray(targetPath?.nodes) ? targetPath.nodes : []
+  const pathEdges = useMemo(() => {
+    const edgeKeys = new Set()
+    for (let index = 0; index < path.length - 1; index += 1) {
+      const currentNode = path[index]
+      const nextNode = path[index + 1]
+      if (!currentNode || !nextNode) continue
+      edgeKeys.add(`${currentNode}->${nextNode}`)
+    }
+    return edgeKeys
+  }, [path])
+  const safeActiveEdgeKeys = Array.isArray(activeEdgeKeys) ? activeEdgeKeys : []
+  const activeEdges = useMemo(() => new Set(safeActiveEdgeKeys.filter((key) => pathEdges.has(key))), [safeActiveEdgeKeys, pathEdges])
 
   useEffect(() => {
     const element = containerRef.current
@@ -87,7 +100,7 @@ export default function NetworkGraph({
   }, [nodes, edges, size])
 
   const positionMap = new Map(positions.map((position) => [position.id, position]))
-  const visitOrderMap = new Map(visitOrder.map((id, index) => [id, index + 1]))
+  const visitOrderMap = new Map(path.map((id, index) => [id, index + 1]))
 
   return (
     <div className="graph-canvas" ref={containerRef}>
@@ -107,7 +120,7 @@ export default function NetworkGraph({
             if (!source || !target) return null
             const key = `${edge.source}->${edge.target}`
             const isActive = activeEdges.has(key)
-            const isVisited = visits.has(edge.source) && visits.has(edge.target)
+            const isVisited = pathEdges.has(key)
             const isVisibleCategory = category === 'all' || edge.category === category || edge.category === 'friend'
             const edgeColor = edge.category === 'friend' ? colors.friend : colors[edge.category] || '#aeb5ae'
             return (
@@ -121,7 +134,7 @@ export default function NetworkGraph({
             const node = nodes.find((item) => item.id === position.id)
             if (!node) return null
             const isRoot = node.id === rootId
-            const isProvider = providerIds.has(node.id)
+            const isProvider = node.type === 'provider' || providerIds.has(node.id)
             const fill = isRoot ? colors.root : isProvider ? colors.provider : colors.user
             const selected = selectedNode === node.id
             const visited = visitOrderMap.has(node.id)
