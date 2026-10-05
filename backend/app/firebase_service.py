@@ -63,6 +63,7 @@ class FirebaseService:
             # Carol's network
             {"from_user": "carol", "to_provider": "dave_mechanic", "category": "mechanic", "timestamp": "2024-01-03"},
             {"from_user": "carol", "to_provider": "eve_plumber", "category": "plumber", "timestamp": "2024-01-04"},
+            {"from_user": "eve_plumber", "to_provider": "nanny_babysitters", "category": "babysitter", "timestamp": "2024-01-04T18:00:00"},
             {"from_user": "carol", "to_provider": "grace_electrician", "category": "electrician", "timestamp": "2024-01-04T12:00:00"},
             {"from_user": "carol", "to_provider": "frank", "category": "friend", "timestamp": "2024-01-05"},
             {"from_user": "carol", "to_provider": "bob_plumber", "category": "plumber", "timestamp": "2024-01-05T12:00:00"},
@@ -87,6 +88,7 @@ class FirebaseService:
         return {
             "bob_plumber": {"name": "Bob's Plumbing", "rating": 4.8, "category": "plumber"},
             "eve_plumber": {"name": "Eve's Pipes", "rating": 4.5, "category": "plumber"},
+            "nanny_babysitters": {"name": "Nanny Babysitters", "rating": 4.8, "category": "babysitter"},
             "dave_mechanic": {"name": "Dave's Auto", "rating": 4.9, "category": "mechanic"},
             "jack_mechanic": {"name": "Jack's Garage", "rating": 4.6, "category": "mechanic"},
             "grace_electrician": {"name": "Grace Electric", "rating": 4.7, "category": "electrician"},

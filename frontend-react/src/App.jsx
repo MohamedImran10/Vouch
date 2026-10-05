@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from 'react'
+import { Component, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -16,12 +16,13 @@ import {
   Sparkles,
   Star,
   Users,
+  UserRound,
   X,
 } from 'lucide-react'
 import { api, getAccessToken, saveAccessToken } from './api'
 import NetworkGraph from './NetworkGraph'
 import VouchForm from './VouchForm'
-import { breadthFirstSearch, depthFirstSearch } from './graphAlgorithms'
+import { breadthFirstSearch, buildAdjacencyList, depthFirstSearch } from './graphAlgorithms'
 import './App.css'
 
 const userStorageKey = 'vouch.currentUser'
@@ -124,18 +125,17 @@ function LoginScreen({ onLogin }) {
   )
 }
 
-function Sidebar({ view, onNavigate, user, onLogout }) {
+function Sidebar({ view, onNavigate, onLogout }) {
   return (
     <aside className="sidebar">
       <div className="brand-lockup"><span className="brand-mark">v</span><span>vouch</span><span className="brand-period">.</span></div>
-      <div className="workspace-switch"><span className="workspace-avatar">{initials(user.name)}</span><span className="workspace-copy"><strong>{user.name}</strong><small>Personal network</small></span><ChevronDown size={15} /></div>
       <nav className="primary-nav" aria-label="Main navigation">
         <span className="nav-caption">WORKSPACE</span>
         <button className={view === 'overview' ? 'nav-item active' : 'nav-item'} onClick={() => onNavigate('overview')}><Compass size={17} />Overview</button>
         <button className={view === 'network' ? 'nav-item active' : 'nav-item'} onClick={() => onNavigate('network')}><Network size={17} />Trust network<span className="nav-count">NEW</span></button>
         <span className="nav-caption nav-caption-spaced">YOUR CIRCLE</span>
         <button className="nav-item" onClick={() => onNavigate('overview')}><Heart size={17} />My vouches</button>
-        <button className="nav-item" onClick={() => onNavigate('network')}><Users size={17} />Connections</button>
+        <button className={view === 'connections' ? 'nav-item active' : 'nav-item'} onClick={() => onNavigate('connections')}><Users size={17} />Connections</button>
       </nav>
       <div className="sidebar-bottom">
         <div className="privacy-note"><ShieldCheck size={16} /><span>Your word stays<br />with your network.</span></div>
@@ -169,6 +169,24 @@ function App() {
   const [selectedNode, setSelectedNode] = useState('')
   const [algorithm, setAlgorithm] = useState('BFS')
   const [traversal, setTraversal] = useState(null)
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const accountMenuRef = useRef(null)
+  const adjacencyList = useMemo(() => buildAdjacencyList(graph.edges, category), [graph.edges, category])
+
+  useEffect(() => {
+    if (!accountMenuOpen) return undefined
+    function closeMenu(event) {
+      if (event.type === 'keydown' && event.key !== 'Escape') return
+      if (event.type === 'pointerdown' && accountMenuRef.current?.contains(event.target)) return
+      setAccountMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeMenu)
+    document.addEventListener('keydown', closeMenu)
+    return () => {
+      document.removeEventListener('pointerdown', closeMenu)
+      document.removeEventListener('keydown', closeMenu)
+    }
+  }, [accountMenuOpen])
 
   async function login(email, password) {
     const result = await api.login(email, password)
@@ -224,9 +242,32 @@ function App() {
     window.setTimeout(() => setToast(''), 2800)
   }
 
-  async function saveVouch(payload) {
-    if (modalVouch) await api.updateVouch(modalVouch.id, payload)
-    else await api.createVouch(payload)
+  async function saveVouch(payload, selectedProvider) {
+    const savedVouch = modalVouch
+      ? await api.updateVouch(modalVouch.id, payload)
+      : await api.createVouch(payload)
+    const provider = providers.find((item) => item.id === payload.to_provider_id) || selectedProvider || {}
+    const nextProvider = {
+      ...provider,
+      id: payload.to_provider_id,
+      name: provider.name || modalVouch?.provider_name || nameFromId(payload.to_provider_id),
+      category: payload.category,
+    }
+    setProviders((current) => current.some((item) => item.id === nextProvider.id)
+      ? current.map((item) => item.id === nextProvider.id ? { ...item, ...nextProvider } : item)
+      : [...current, nextProvider])
+    setGraph((current) => {
+      const oldProviderId = modalVouch?.to_provider_id
+      const edges = current.edges.filter((edge) => edge.source !== session.user.id || edge.target !== oldProviderId)
+      edges.push({ source: session.user.id, target: payload.to_provider_id, category: payload.category })
+      const nodes = current.nodes.some((node) => node.id === nextProvider.id)
+        ? current.nodes.map((node) => node.id === nextProvider.id ? { ...node, type: 'provider', category: payload.category, label: nextProvider.name } : node)
+        : [...current.nodes, { id: nextProvider.id, type: 'provider', category: payload.category, label: nextProvider.name }]
+      return { nodes, edges }
+    })
+    setVouches((current) => modalVouch
+      ? current.map((item) => item.id === modalVouch.id ? { ...item, ...savedVouch, ...payload } : item)
+      : [...current, { ...savedVouch, ...payload }])
     setShowForm(false)
     setModalVouch(null)
     setLoading(true)
@@ -262,14 +303,16 @@ function App() {
   }
 
   function runBfs() {
-    const result = breadthFirstSearch(graph, session.user.id, category, selectedNode)
+    const result = breadthFirstSearch(graph, session.user.id, category, selectedNode, adjacencyList)
     const targetPathFound = !selectedNode || result.targetPath.length > 0
     const targetPath = targetPathFound ? result.targetPath : []
     const highlightedEdges = selectedNode
       ? result.targetPath.slice(1).map((id, index) => `${result.targetPath[index]}->${id}`)
       : []
-    setTraversal({ mode: 'BFS', traversalOrder: result.order, edgeKeys: highlightedEdges, providers: result.providers, targetId: selectedNode, targetPath })
-    flash(`Breadth-first search reached ${result.order.length} people and providers.`)
+    setTraversal({ mode: 'BFS', traversalOrder: result.order, edgeKeys: highlightedEdges, providers: result.providers, targetId: selectedNode, targetPath, reason: result.reason })
+    flash(result.reason === 'DISCONNECTED_COMPONENT'
+      ? 'This person is outside your connected trust network. Add a vouch to bridge your circles.'
+      : `Breadth-first search reached ${result.order.length} people and providers.`)
   }
 
   function runDfs() {
@@ -280,7 +323,7 @@ function App() {
       flash('Choose a destination in the current network.')
       return
     }
-    const result = depthFirstSearch(graph, session.user.id, target.id, category)
+    const result = depthFirstSearch(graph, session.user.id, target.id, category, adjacencyList)
     const targetPath = Array.isArray(result?.path)
       ? result.path
       : Array.isArray(result?.path?.nodes) ? result.path.nodes : []
@@ -292,8 +335,10 @@ function App() {
       edgeKeys.push(`${currentNode}->${nextNode}`)
     }
     const found = Boolean(result?.found && targetPath.length)
-    setTraversal({ mode: 'DFS', traversalOrder: result?.visited || [], edgeKeys, targetPath, found, cycleDetected: result?.cycleDetected })
-    flash(found ? `Trust path found in ${Math.max(targetPath.length - 1, 0)} step${targetPath.length === 2 ? '' : 's'}.` : 'No trust path to that node in the selected category.')
+    setTraversal({ mode: 'DFS', traversalOrder: result?.visited || [], edgeKeys, targetPath, found, cycleDetected: result?.cycleDetected, reason: result?.reason })
+    flash(result?.reason === 'DISCONNECTED_COMPONENT'
+      ? 'This person is outside your connected trust network. Add a vouch to bridge your circles.'
+      : found ? `Trust path found in ${Math.max(targetPath.length - 1, 0)} step${targetPath.length === 2 ? '' : 's'}.` : 'No trust path to that node in the selected category.')
   }
 
   if (!session) return <LoginScreen onLogin={login} />
@@ -314,14 +359,48 @@ function App() {
   const traversalPath = Array.isArray(traversal?.targetPath)
     ? traversal.targetPath
     : Array.isArray(traversal?.targetPath?.nodes) ? traversal.targetPath.nodes : []
+  const nameForNode = (id) => id === session.user.id
+    ? 'You'
+    : providers.find((provider) => provider.id === id)?.name || graph.nodes.find((node) => node.id === id)?.label || nameFromId(id)
+  const pendingEdges = graph.edges.filter((edge) => edge.status === 'pending' || edge.pending === true)
+  const directContactRows = graph.edges
+    .filter((edge) => edge.category === 'friend' && (edge.source === session.user.id || edge.target === session.user.id))
+    .map((edge) => ({
+      id: `contact-${edge.source}-${edge.target}`,
+      type: 'Direct contact',
+      name: nameForNode(edge.source === session.user.id ? edge.target : edge.source),
+      detail: 'Connected to you',
+      category: 'friend',
+      status: 'Connected',
+    }))
+  const vouchRows = graph.edges
+    .filter((edge) => edge.category !== 'friend' && !pendingEdges.includes(edge))
+    .map((edge) => ({
+      id: `vouch-${edge.source}-${edge.target}`,
+      type: 'Vouch',
+      name: nameForNode(edge.target),
+      detail: `Vouched by ${nameForNode(edge.source)}`,
+      category: edge.category,
+      status: 'Active',
+    }))
+  const pendingRows = pendingEdges.map((edge) => ({
+    id: `pending-${edge.source}-${edge.target}`,
+    type: 'Pending link',
+    name: nameForNode(edge.target),
+    detail: `Invited by ${nameForNode(edge.source)}`,
+    category: edge.category,
+    status: 'Pending',
+  }))
+  const connectionRows = [...directContactRows, ...vouchRows, ...pendingRows]
+  const viewTitles = { overview: 'Overview', network: 'Trust network', connections: 'Connections', profile: 'Profile' }
 
   return (
     <div className="app-shell">
-      <Sidebar view={view} onNavigate={(nextView) => { setView(nextView); setTraversal(null) }} user={session.user} onLogout={logout} />
+      <Sidebar view={view} onNavigate={(nextView) => { setView(nextView); setTraversal(null) }} onLogout={logout} />
       <main className="main-panel">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{view === 'network' ? 'Trust network' : 'Overview'}</strong></div>
-          <div className="topbar-actions"><span className="connection-status"><i />NETWORK LIVE</span><button className="icon-button topbar-help" title="Help and support"><CircleHelp size={17} /></button><button className="user-chip" title={`Signed in as ${session.user.email}`}><span className="user-avatar">{initials(session.user.name)}</span><span>{session.user.name}</span><ChevronDown size={14} /></button></div>
+          <div className="breadcrumbs"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{viewTitles[view] || 'Overview'}</strong></div>
+          <div className="topbar-actions"><span className="connection-status"><i />NETWORK LIVE</span><button className="icon-button topbar-help" title="Help and support"><CircleHelp size={17} /></button><div className="account-menu-wrap" ref={accountMenuRef}><button aria-expanded={accountMenuOpen} aria-haspopup="menu" className="user-chip" onClick={() => setAccountMenuOpen((open) => !open)} title={`Signed in as ${session.user.email}`}><span className="user-avatar">{initials(session.user.name)}</span><span>{session.user.name}</span><ChevronDown size={14} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><button role="menuitem" onClick={() => { setView('profile'); setAccountMenuOpen(false) }}><UserRound size={15} />Profile</button><button role="menuitem" onClick={logout}><LogOut size={15} />Sign out</button></div>}</div></div>
         </header>
 
         <div className="page-content">
@@ -369,7 +448,7 @@ function App() {
                 <div className="teaser-lines" aria-hidden="true"><span /><span /><span /><i /><i /></div>
               </section>
             </>
-          ) : (
+          ) : view === 'network' ? (
             <>
               <section className="page-heading graph-heading">
                 <div><span className="eyebrow">THE PEOPLE BEHIND THE RECOMMENDATION</span><h1>Your trust network.</h1><p>Explore real connections, shortest routes, and the exact path behind a vouch.</p></div>
@@ -389,14 +468,14 @@ function App() {
                   <label className="field-label" htmlFor="target-node">{algorithm === 'DFS' ? 'Trace to a person or provider' : 'Target for shortest path (optional)'}</label>
                   <select id="target-node" className="target-select" onChange={(event) => setSelectedNode(event.target.value)} value={selectedNode}>
                     <option value="">Choose a node…</option>
-                    {filteredGraphNodes.filter((node) => node.id !== session.user.id).map((node) => <option key={node.id} value={node.id}>{providers.find((provider) => provider.id === node.id)?.name || node.label || nameFromId(node.id)}</option>)}
+                    {graph.nodes.filter((node) => node.id !== session.user.id).map((node) => <option key={node.id} value={node.id}>{providers.find((provider) => provider.id === node.id)?.name || node.label || nameFromId(node.id)}</option>)}
                   </select>
                   <button className="button button-primary run-search" disabled={algorithm === 'DFS' && !selectedNode} onClick={algorithm === 'DFS' ? runDfs : runBfs}>
                     {algorithm === 'DFS' ? <Compass size={16} /> : <GitBranch size={16} />}{algorithm === 'DFS' ? 'Trace trust path' : 'Run breadth-first search'}
                   </button>
                   {traversal && <div className="traversal-results">
                     <div className="result-heading"><span>{traversal.mode === 'BFS' ? 'CLOSEST PROVIDERS' : 'TRUST PATH'}</span><button className="icon-button" title="Clear traversal" onClick={() => setTraversal(null)}><X size={14} /></button></div>
-                    {traversal.mode === 'BFS' ? traversal.targetId ? traversalPath.length ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> SHORTEST TRUST PATH</span><div className="path-timeline">{traversalPath.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversalPath.length - 1 ? ' path-destination' : ''}`} />{index < traversalPath.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversalPath.length - 1 ? 'Selected destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversalPath.length - 1} {traversalPath.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects to the selected node in this category.</p> : traversal.providers.length ? traversal.providers.map((result, index) => {
+                    {traversal.reason === 'DISCONNECTED_COMPONENT' ? <p className="disconnected-message"><Network size={18} /><span>This person is outside your connected trust network. Add a vouch to bridge your circles.</span></p> : traversal.mode === 'BFS' ? traversal.targetId ? traversalPath.length ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> SHORTEST TRUST PATH</span><div className="path-timeline">{traversalPath.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversalPath.length - 1 ? ' path-destination' : ''}`} />{index < traversalPath.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversalPath.length - 1 ? 'Selected destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversalPath.length - 1} {traversalPath.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects to the selected node in this category.</p> : traversal.providers.length ? traversal.providers.map((result, index) => {
                       const providerName = providers.find((provider) => provider.id === result.id)?.name || nameFromId(result.id)
                       return <button className="path-result" key={result.id} onClick={() => setSelectedNode(result.id)}><span className="result-rank">{String(index + 1).padStart(2, '0')}</span><span><strong>{providerName}</strong><small>{result.distance} {result.distance === 1 ? 'step' : 'steps'} · {result.path.map((id) => id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)).join(' → ')}</small></span><ArrowUpRight size={15} /></button>
                     }) : <p className="no-results">No providers are reachable in this category yet.</p> : traversal.found && traversalPath.length ? <div className="dfs-result"><span className="verified-path"><ShieldCheck size={16} /> VERIFIED TRUST PATH</span><div className="path-timeline">{traversalPath.map((id, index) => <div className="path-step" key={`${id}-${index}`}><span className={`path-marker${index === 0 ? ' path-origin' : index === traversalPath.length - 1 ? ' path-destination' : ''}`} />{index < traversalPath.length - 1 && <span className="path-connector" />}<strong>{id === session.user.id ? 'You' : providers.find((provider) => provider.id === id)?.name || nameFromId(id)}</strong><small>{index === 0 ? 'Starting point' : index === traversalPath.length - 1 ? 'Trusted destination' : 'Connection'}</small></div>)}</div><span className="path-distance">{traversalPath.length - 1} {traversalPath.length === 2 ? 'degree' : 'degrees'} of trust</span></div> : <p className="no-results">No path connects these nodes in the selected category.</p>}
@@ -405,6 +484,20 @@ function App() {
                 </aside>
               </section>
               <section className="graph-explainer"><span className="explainer-mark">i</span><p><strong>How to read this map</strong> People are green, providers are blue, and your account is coral. Colored links show vouch categories. BFS ranks nearby options; DFS traces one exact route.</p><button className="text-button" onClick={() => setView('overview')}>Back to your vouches <ArrowDownRight size={14} /></button></section>
+            </>
+          ) : view === 'connections' ? (
+            <>
+              <section className="page-heading connections-heading"><div><span className="eyebrow">YOUR CIRCLE</span><h1>Connections.</h1><p>Direct contacts, recommendations, and links waiting to be confirmed.</p></div><div className="heading-actions"><button className="button button-quiet" onClick={() => setView('network')}><Network size={16} />Explore network</button></div></section>
+              <section className="connection-summary" aria-label="Connection counts"><div><strong>{directContactRows.length}</strong><span>DIRECT CONTACTS</span></div><div><strong>{vouchRows.length}</strong><span>VOUCHES</span></div><div><strong>{pendingRows.length}</strong><span>PENDING LINKS</span></div></section>
+              <section className="ledger-section connections-section"><div className="section-heading"><div><span className="eyebrow">PEOPLE AND RECOMMENDATIONS</span><h2>All connections</h2></div><span className="connection-total">{connectionRows.length} total</span></div>
+                <div className="ledger-table-wrap"><table className="ledger-table connections-table"><thead><tr><th>PERSON / PROVIDER</th><th>RELATIONSHIP</th><th>CATEGORY</th><th>STATUS</th></tr></thead><tbody>{loading ? <tr><td className="table-empty" colSpan="4"><span className="spinner spinner-dark" />Loading connections…</td></tr> : connectionRows.length ? connectionRows.map((item) => <tr key={item.id}><td><div className="provider-cell"><span className="provider-avatar">{initials(item.name)}</span><span><strong>{item.name}</strong><small>{item.detail}</small></span></div></td><td>{item.type}</td><td><span className={`category-pill category-${item.category}`}>{categoryTitle(item.category, categories)}</span></td><td><span className={`connection-state${item.status === 'Pending' ? ' is-pending' : ''}`}>{item.status}</span></td></tr>) : <tr><td className="table-empty" colSpan="4"><div className="empty-icon"><Users size={20} /></div><strong>No connections yet</strong><span>Add a vouch or connect with someone to build your circle.</span></td></tr>}</tbody></table></div>
+                {!loading && pendingRows.length === 0 && <p className="pending-note"><ShieldCheck size={15} />No pending links right now.</p>}
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="page-heading profile-heading"><div><span className="eyebrow">ACCOUNT</span><h1>Your profile.</h1><p>The account currently connected to your Vouch network.</p></div></section>
+              <section className="profile-details"><div className="profile-avatar">{initials(session.user.name)}</div><dl><div><dt>Name</dt><dd>{session.user.name}</dd></div><div><dt>Email</dt><dd>{session.user.email}</dd></div><div><dt>Account ID</dt><dd>{session.user.id}</dd></div></dl><button className="button button-quiet" onClick={logout}><LogOut size={15} />Sign out</button></section>
             </>
           )}
         </div>

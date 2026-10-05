@@ -186,6 +186,17 @@ def test_trust_path_invalid(client):
     assert len(data["path"]) == 0
 
 
+def test_trust_path_reports_disconnected_component(client):
+    graph_engine.add_edge("isolated_person", "isolated_provider", "plumber")
+
+    response = client.get("/api/trust-path?from_id=alice&to_id=isolated_provider")
+
+    assert response.status_code == 200
+    assert response.json()["reachable"] is False
+    assert response.json()["reason"] == "DISCONNECTED_COMPONENT"
+    assert response.json()["path"] == []
+
+
 def test_get_full_graph(client):
     """Test full graph export."""
     response = client.get("/api/graph/full")
@@ -206,6 +217,7 @@ def test_full_graph_uses_signed_in_user_as_mock_root(client):
         json={"email": "imran@example.com", "password": "anything"},
     )
     token = login.json()["access_token"]
+    graph_engine.add_edge("imran", "new_provider", "babysitter")
 
     response = client.get(
         "/api/graph/full",
@@ -218,6 +230,7 @@ def test_full_graph_uses_signed_in_user_as_mock_root(client):
     assert "imran" in node_ids
     assert "alice" not in node_ids
     assert any(edge["source"] == "imran" and edge["target"] == "carol" for edge in data["edges"])
+    assert any(edge["source"] == "imran" and edge["target"] == "new_provider" for edge in data["edges"])
 
 
 def test_create_vouch(client):
@@ -304,6 +317,8 @@ def test_vouch_routes_support_provider_rating_note_and_graph_crud(client):
     assert created.status_code == 201, created.text
     vouch_id = created.json()["id"]
     assert created.json()["rating"] == 5
+    nanny_path = graph_engine.dfs_trust_path("react-crud", "nanny_babysitters")
+    assert nanny_path.valid is True
 
     plumber_list = client.get("/api/vouches?user_id=react-crud&category=plumber")
     assert plumber_list.status_code == 200, plumber_list.text

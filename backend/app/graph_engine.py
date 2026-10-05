@@ -31,6 +31,8 @@ class TrustPath:
     path: List[str]
     valid: bool
     cycle_detected: bool = False
+    reachable: bool = True
+    reason: Optional[str] = None
 
 
 class GraphEngine:
@@ -62,6 +64,86 @@ class GraphEngine:
         self.providers[to_provider].add(from_user)
         self.category_map[category][to_provider].add(from_user)
 
+    def connected_components(self, category: Optional[str] = None) -> List[Set[str]]:
+        """Return weakly connected components, optionally filtered by edge category."""
+        normalized_category = (category or "").strip().lower()
+        filter_category = normalized_category not in {"", "all", "every category"}
+        neighbors: Dict[str, Set[str]] = defaultdict(set)
+        for source, targets in self.adjacency.items():
+            neighbors.setdefault(source, set())
+            for target, edge_data in targets.items():
+                edge_category = edge_data.get("category", "").lower()
+                if filter_category and edge_category not in {normalized_category, "friend"}:
+                    continue
+                neighbors[source].add(target)
+                neighbors[target].add(source)
+
+        components = []
+        unseen = set(neighbors)
+        while unseen:
+            start = unseen.pop()
+            component = {start}
+            queue = [start]
+            for current in queue:
+                for neighbor in neighbors[current]:
+                    if neighbor in unseen:
+                        unseen.remove(neighbor)
+                        component.add(neighbor)
+                        queue.append(neighbor)
+            components.append(component)
+        return components
+
+    def _adjacency_for(self, category: Optional[str] = None) -> Dict[str, List[Tuple[str, Dict[str, str]]]]:
+        """Build an undirected traversal view without changing persisted edge direction."""
+        normalized_category = (category or "").strip().lower()
+        filter_category = normalized_category not in {"", "all", "every category"}
+        adjacency: Dict[str, List[Tuple[str, Dict[str, str]]]] = defaultdict(list)
+        for source, targets in self.adjacency.items():
+            adjacency.setdefault(source, [])
+            for target, edge_data in targets.items():
+                edge_category = edge_data.get("category", "").lower()
+                if filter_category and edge_category not in {normalized_category, "friend"}:
+                    continue
+                adjacency[source].append((target, edge_data))
+                adjacency[target].append((source, edge_data))
+        return adjacency
+
+    def ensure_connected(self, root_id: Optional[str] = None) -> None:
+        """Connect all existing nodes and link the root to a high-degree hub."""
+        components = self.connected_components()
+        if not components:
+            return
+
+        if root_id is None:
+            root_id = next(iter(self.adjacency))
+        degrees: Dict[str, int] = defaultdict(int)
+        for component in components:
+            for node_id in component:
+                degrees.setdefault(node_id, 0)
+        for source, targets in self.adjacency.items():
+            for target in targets:
+                degrees[source] += 1
+                degrees[target] += 1
+
+        candidates = [node_id for node_id in degrees if node_id != root_id]
+        if not candidates:
+            return
+        hub_candidates = [node_id for node_id in candidates if degrees[node_id] >= 2]
+        hub_id = max(hub_candidates or candidates, key=lambda node_id: degrees[node_id])
+        if hub_id not in self.adjacency.get(root_id, {}):
+            self.add_edge(root_id, hub_id, "friend")
+
+        while True:
+            components = self.connected_components()
+            root_component = next((component for component in components if root_id in component), {root_id})
+            disconnected = [component for component in components if component is not root_component]
+            if not disconnected:
+                break
+            target_id = max(disconnected[0], key=lambda node_id: degrees.get(node_id, 0))
+            self.add_edge(root_id, target_id, "friend")
+            degrees[root_id] += 1
+            degrees[target_id] += 1
+
     def bfs_search(self, user_id: str, category: str, max_degree: int = 2) -> List[SearchResult]:
         """
         Execute Breadth-First Search to find providers by social proximity.
@@ -77,6 +159,7 @@ class GraphEngine:
         results = []
         visited = {user_id}
         queue = deque([(user_id, 0, [user_id])])  # (current_node, degree, path)
+        adjacency = self._adjacency_for()
 
         # Track found providers to avoid duplicates
         found_providers = set()
@@ -88,26 +171,20 @@ class GraphEngine:
             if degree > max_degree:
                 continue
 
-            # Check if current node has vouched for any providers in this category
-            if current in self.adjacency:
-                for provider_id, edge_data in self.adjacency[current].items():
-                    if edge_data["category"] == category and provider_id not in found_providers:
-                        found_providers.add(provider_id)
-                        results.append(SearchResult(
-                            provider_id=provider_id,
-                            degree=degree + 1,  # +1 because the edge to provider is the next hop
-                            path=path + [provider_id],
-                            category=category
-                        ))
+            for neighbor, edge_data in adjacency.get(current, []):
+                if edge_data["category"].lower() == category.lower() and neighbor not in found_providers and neighbor != user_id:
+                    found_providers.add(neighbor)
+                    results.append(SearchResult(
+                        provider_id=neighbor,
+                        degree=degree + 1,
+                        path=path + [neighbor],
+                        category=category
+                    ))
 
-            # Explore neighbors (friends of current user)
-            if current in self.adjacency:
-                for neighbor in self.adjacency[current].keys():
-                    # Only traverse user->user edges (not user->provider edges for BFS expansion)
-                    # In this simplified model, we treat all outgoing edges as potential friends
-                    if neighbor not in visited and neighbor not in found_providers:
-                        visited.add(neighbor)
-                        queue.append((neighbor, degree + 1, path + [neighbor]))
+            for neighbor, _ in adjacency.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, degree + 1, path + [neighbor]))
 
         # Sort by degree (1st degree first, then 2nd degree)
         results.sort(key=lambda r: r.degree)
@@ -126,13 +203,19 @@ class GraphEngine:
         Returns:
             TrustPath object with path and validation status
         """
+        components = self.connected_components(category)
+        start_component = next((component for component in components if from_user in component), set())
+        target_component = next((component for component in components if to_provider in component), set())
+        if not target_component:
+            return TrustPath([], False, reachable=False, reason="NODE_NOT_FOUND")
+        if not start_component or start_component is not target_component:
+            return TrustPath([], False, reachable=False, reason="DISCONNECTED_COMPONENT")
+
+        adjacency = self._adjacency_for(category)
         visited = set()
         rec_stack = set()  # For cycle detection
         path = []
-        normalized_category = (category or "").strip().lower()
-        filter_category = normalized_category not in {"", "all", "every category"}
-
-        def dfs_helper(current: str, target: str) -> bool:
+        def dfs_helper(current: str, target: str, parent: Optional[str] = None) -> bool:
             """Recursive DFS helper with cycle detection."""
             if current in rec_stack:
                 return False  # Cycle detected
@@ -146,14 +229,12 @@ class GraphEngine:
             path.append(current)
 
             # Explore neighbors
-            if current in self.adjacency:
-                for neighbor, edge_data in self.adjacency[current].items():
-                    edge_category = edge_data.get("category", "").lower()
-                    if filter_category and edge_category not in {normalized_category, "friend"}:
-                        continue
-                    if neighbor not in visited or neighbor == target:
-                        if dfs_helper(neighbor, target):
-                            return True
+            for neighbor, _ in adjacency.get(current, []):
+                if neighbor == parent:
+                    continue
+                if neighbor not in visited or neighbor == target:
+                    if dfs_helper(neighbor, target, current):
+                        return True
 
             # Backtrack
             path.pop()
@@ -167,7 +248,9 @@ class GraphEngine:
         return TrustPath(
             path=path if found else [],
             valid=found,
-            cycle_detected=cycle_detected
+            cycle_detected=cycle_detected,
+            reachable=found,
+            reason=None if found else "NO_DIRECTED_PATH",
         )
 
     def get_full_graph(self) -> Dict[str, any]:

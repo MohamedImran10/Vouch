@@ -58,6 +58,8 @@ async def create_vouch(
             category=vouch_data.category.lower(),
             timestamp=timestamp
         )
+        if firebase_service.use_mock:
+            graph_engine.ensure_connected(user_id)
 
         return VouchResponse(
             id=vouch_id,

@@ -21,6 +21,7 @@ export default function VouchForm({ categories, providers, vouch, initialCategor
 
     setSaving(true)
     setError('')
+    let createdProvider = null
     try {
       const normalizedName = providerName.trim().toLocaleLowerCase()
       let provider = providerOptions.find(
@@ -35,6 +36,7 @@ export default function VouchForm({ categories, providers, vouch, initialCategor
           category,
           services: [],
         })
+        createdProvider = provider
       }
 
       await onSave({
@@ -42,8 +44,11 @@ export default function VouchForm({ categories, providers, vouch, initialCategor
         category,
         rating,
         message: message.trim(),
-      })
+      }, provider)
     } catch (saveError) {
+      if (createdProvider?.id) {
+        await api.deleteProvider(createdProvider.id).catch(() => {})
+      }
       setError(saveError.message || 'Could not save this vouch.')
       setSaving(false)
     }

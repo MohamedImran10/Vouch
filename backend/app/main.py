@@ -67,6 +67,8 @@ class TrustPathResponse(BaseModel):
     path: List[str]
     valid: bool
     cycle_detected: bool
+    reachable: bool = True
+    reason: Optional[str] = None
 
 
 class GraphNode(BaseModel):
@@ -102,6 +104,11 @@ async def startup_event():
             category=vouch["category"],
             timestamp=vouch.get("timestamp", "")
         )
+
+    if firebase_service.use_mock and vouches:
+        primary_user_id = vouches[0].get("from_user_id", vouches[0].get("from_user"))
+        if primary_user_id:
+            graph_engine.ensure_connected(primary_user_id)
 
     print(f"✅ Loaded {len(vouches)} vouches into graph")
     print(f"📊 Graph: {graph_engine.get_node_count()} nodes, {graph_engine.get_edge_count()} edges")
@@ -210,7 +217,9 @@ async def get_trust_path(
     return {
         "path": trust_path.path,
         "valid": trust_path.valid,
-        "cycle_detected": trust_path.cycle_detected
+        "cycle_detected": trust_path.cycle_detected,
+        "reachable": trust_path.reachable,
+        "reason": trust_path.reason,
     }
 
 
@@ -226,22 +235,30 @@ async def get_full_graph(current_user: Optional[dict] = Depends(get_optional_use
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
 
-    # The mock network is seeded for Alice; present that root as the signed-in demo user.
+    # Merge the seeded root and signed-in user's mock edges under the active account ID.
     user_id = current_user.get("user_id") if current_user else None
-    node_ids = {node["id"] for node in nodes}
-    if firebase_service.use_mock and user_id and user_id != "alice" and user_id not in node_ids:
-        nodes = [
-            {**node, "id": user_id} if node["id"] == "alice" else node
-            for node in nodes
-        ]
-        edges = [
-            {
+    if firebase_service.use_mock and user_id and user_id != "alice":
+        remapped_nodes = {}
+        for node in nodes:
+            node_id = user_id if node["id"] == "alice" else node["id"]
+            if node_id in remapped_nodes:
+                remapped_nodes[node_id]["degree"] += node.get("degree", 0)
+            else:
+                remapped_nodes[node_id] = {**node, "id": node_id}
+        nodes = list(remapped_nodes.values())
+
+        remapped_edges = {}
+        for edge in edges:
+            source = user_id if edge["source"] == "alice" else edge["source"]
+            target = user_id if edge["target"] == "alice" else edge["target"]
+            if source == target:
+                continue
+            remapped_edges[(source, target, edge.get("category"))] = {
                 **edge,
-                "source": user_id if edge["source"] == "alice" else edge["source"],
-                "target": user_id if edge["target"] == "alice" else edge["target"],
+                "source": source,
+                "target": target,
             }
-            for edge in edges
-        ]
+        edges = list(remapped_edges.values())
 
     return {
         "nodes": nodes,

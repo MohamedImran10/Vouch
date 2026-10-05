@@ -49,6 +49,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(provider),
   }),
+  deleteProvider: (id) => request(`/api/providers/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }),
   createVouch: (vouch) => request('/api/vouches', {
     method: 'POST',
     body: JSON.stringify(vouch),

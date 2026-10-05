@@ -4,6 +4,7 @@ Verifies BFS distance calculation and DFS path tracing.
 """
 import pytest
 from app.graph_engine import GraphEngine, SearchResult, TrustPath
+from app.firebase_service import FirebaseService
 
 
 @pytest.fixture
@@ -120,6 +121,44 @@ def test_dfs_second_degree_path(sample_graph):
     assert path_result.path == ["alice", "carol", "dave_mechanic"]
 
 
+def test_bfs_and_dfs_follow_undirected_three_hop_path():
+    engine = GraphEngine()
+    engine.add_edge("user-root", "carol-node", "friend")
+    engine.add_edge("carol-node", "eve-pipes", "plumber")
+    engine.add_edge("eve-pipes", "nanny-babysitters", "babysitter")
+
+    bfs_results = engine.bfs_search("user-root", "babysitter", max_degree=3)
+    nanny_result = next(result for result in bfs_results if result.provider_id == "nanny-babysitters")
+    dfs_result = engine.dfs_trust_path("user-root", "nanny-babysitters")
+
+    expected_path = ["user-root", "carol-node", "eve-pipes", "nanny-babysitters"]
+    assert nanny_result.path == expected_path
+    assert nanny_result.degree == 3
+    assert dfs_result.path == expected_path
+    assert dfs_result.valid is True
+
+
+def test_mock_seed_reaches_nanny_babysitters_in_three_hops():
+    service = FirebaseService()
+    service.use_mock = True
+    engine = GraphEngine()
+    for vouch in service.load_vouches():
+        engine.add_edge(
+            vouch.get("from_user_id", vouch.get("from_user")),
+            vouch.get("to_provider_id", vouch.get("to_provider")),
+            vouch["category"],
+            vouch.get("timestamp", ""),
+        )
+
+    bfs_results = engine.bfs_search("alice", "babysitter", max_degree=3)
+    nanny_result = next(result for result in bfs_results if result.provider_id == "nanny_babysitters")
+    dfs_result = engine.dfs_trust_path("alice", "nanny_babysitters")
+    expected_path = ["alice", "carol", "eve_plumber", "nanny_babysitters"]
+
+    assert nanny_result.path == expected_path
+    assert dfs_result.path == expected_path
+
+
 def test_dfs_all_category_aliases_bypass_filtering(sample_graph):
     for category in ("all", "ALL", "Every category", ""):
         path_result = sample_graph.dfs_trust_path("alice", "dave_mechanic", category)
@@ -141,6 +180,46 @@ def test_dfs_no_path(sample_graph):
 
     assert path_result.valid is False
     assert len(path_result.path) == 0
+
+
+def test_dfs_reports_disconnected_component_before_traversal():
+    engine = GraphEngine()
+    engine.add_edge("root-id", "hub-id", "friend")
+    engine.add_edge("hub-id", "second-node", "friend")
+    engine.add_edge("isolated-person", "isolated-provider", "plumber")
+
+    path_result = engine.dfs_trust_path("root-id", "isolated-provider")
+
+    assert path_result.valid is False
+    assert path_result.reachable is False
+    assert path_result.reason == "DISCONNECTED_COMPONENT"
+    assert path_result.path == []
+
+
+def test_ensure_connected_uses_generic_ids_and_attaches_root_to_hub():
+    engine = GraphEngine()
+    engine.add_edge("user-x", "person-y", "friend")
+    engine.add_edge("person-y", "provider-z", "plumber")
+    engine.add_edge("other-person", "other-provider", "mechanic")
+
+    engine.ensure_connected("user-x")
+
+    components = engine.connected_components()
+    assert len(components) == 1
+    assert any(
+        edge_data["category"] == "friend"
+        for edge_data in engine.adjacency["user-x"].values()
+    )
+    degrees = {node: 0 for component in components for node in component}
+    for source, targets in engine.adjacency.items():
+        for target in targets:
+            degrees[source] += 1
+            degrees[target] += 1
+    root_hubs = [
+        target for target in engine.adjacency["user-x"]
+        if degrees[target] >= 2
+    ]
+    assert root_hubs
 
 
 def test_dfs_cycle_detection():

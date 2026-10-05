@@ -22,6 +22,10 @@ const colors = {
   cleaner: '#708fad',
 }
 
+function undirectedEdgeKey(source, target) {
+  return [source, target].sort().join('::')
+}
+
 function displayName(node, providers, rootId) {
   if (node.id === rootId) return 'You'
   const provider = providers.find((item) => item.id === node.id)
@@ -44,21 +48,24 @@ export default function NetworkGraph({
   const [size, setSize] = useState({ width: 920, height: 560 })
   const [positions, setPositions] = useState([])
   const providerIds = useMemo(() => new Set(edges.filter((edge) => edge.category !== 'friend').map((edge) => edge.target)), [edges])
-  const path = Array.isArray(targetPath)
+  const path = useMemo(() => Array.isArray(targetPath)
     ? targetPath
-    : Array.isArray(targetPath?.nodes) ? targetPath.nodes : []
+    : Array.isArray(targetPath?.nodes) ? targetPath.nodes : [], [targetPath])
   const pathEdges = useMemo(() => {
     const edgeKeys = new Set()
     for (let index = 0; index < path.length - 1; index += 1) {
       const currentNode = path[index]
       const nextNode = path[index + 1]
       if (!currentNode || !nextNode) continue
-      edgeKeys.add(`${currentNode}->${nextNode}`)
+      edgeKeys.add(undirectedEdgeKey(currentNode, nextNode))
     }
     return edgeKeys
   }, [path])
-  const safeActiveEdgeKeys = Array.isArray(activeEdgeKeys) ? activeEdgeKeys : []
-  const activeEdges = useMemo(() => new Set(safeActiveEdgeKeys.filter((key) => pathEdges.has(key))), [safeActiveEdgeKeys, pathEdges])
+  const safeActiveEdgeKeys = useMemo(() => Array.isArray(activeEdgeKeys) ? activeEdgeKeys : [], [activeEdgeKeys])
+  const activeEdges = useMemo(() => new Set(safeActiveEdgeKeys.map((key) => {
+    const [source, target] = key.split('->')
+    return undirectedEdgeKey(source, target)
+  }).filter((key) => pathEdges.has(key))), [safeActiveEdgeKeys, pathEdges])
 
   useEffect(() => {
     const element = containerRef.current
@@ -119,8 +126,9 @@ export default function NetworkGraph({
             const target = positionMap.get(edge.target)
             if (!source || !target) return null
             const key = `${edge.source}->${edge.target}`
-            const isActive = activeEdges.has(key)
-            const isVisited = pathEdges.has(key)
+            const traversalKey = undirectedEdgeKey(edge.source, edge.target)
+            const isActive = activeEdges.has(traversalKey)
+            const isVisited = pathEdges.has(traversalKey)
             const isVisibleCategory = category === 'all' || edge.category === category || edge.category === 'friend'
             const edgeColor = edge.category === 'friend' ? colors.friend : colors[edge.category] || '#aeb5ae'
             return (

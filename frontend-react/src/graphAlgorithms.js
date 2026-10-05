@@ -9,17 +9,37 @@ function includesAllCategories(category) {
   return !normalizedCategory || normalizedCategory === 'all' || normalizedCategory === 'every category'
 }
 
-function adjacencyFor(edges, category) {
+export function buildAdjacencyList(edges, category = 'all') {
   const adjacency = new Map()
   for (const edge of eligibleEdges(edges, category)) {
     if (!adjacency.has(edge.source)) adjacency.set(edge.source, [])
     adjacency.get(edge.source).push(edge)
+    if (edge.target !== edge.source) {
+      if (!adjacency.has(edge.target)) adjacency.set(edge.target, [])
+      adjacency.get(edge.target).push({ ...edge, source: edge.target, target: edge.source })
+    }
   }
   return adjacency
 }
 
-export function breadthFirstSearch(graph, startId, category = 'all', targetId = '') {
-  const adjacency = adjacencyFor(graph.edges, category)
+function weakComponentFor(graph, startId, category) {
+  const edges = eligibleEdges(graph.edges, category)
+  const component = new Set([startId])
+  const queue = [startId]
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index]
+    for (const edge of edges) {
+      const neighbor = edge.source === current ? edge.target : edge.target === current ? edge.source : null
+      if (neighbor && !component.has(neighbor)) {
+        component.add(neighbor)
+        queue.push(neighbor)
+      }
+    }
+  }
+  return component
+}
+
+export function breadthFirstSearch(graph, startId, category = 'all', targetId = '', adjacency = buildAdjacencyList(graph.edges, category)) {
   const distance = new Map([[startId, 0]])
   const parent = new Map()
   const order = []
@@ -60,17 +80,27 @@ export function breadthFirstSearch(graph, startId, category = 'all', targetId = 
     if (!cursor) targetPath.length = 0
   }
 
+  const targetExists = graph.nodes.some((node) => node.id === targetId)
+  const isDisconnected = Boolean(targetId && targetExists && !weakComponentFor(graph, startId, category).has(targetId))
+
   return {
     order,
     providers,
     distance,
     targetPath,
     treeEdges: [...parent.values()].map((entry) => entry.edge),
+    reachable: !targetId || targetPath.length > 0,
+    reason: isDisconnected ? 'DISCONNECTED_COMPONENT' : targetId && !targetExists ? 'NODE_NOT_FOUND' : targetId && !targetPath.length ? 'NO_DIRECTED_PATH' : null,
   }
 }
 
-export function depthFirstSearch(graph, startId, targetId, category = 'all') {
-  const adjacency = adjacencyFor(graph.edges, category)
+export function depthFirstSearch(graph, startId, targetId, category = 'all', adjacency = buildAdjacencyList(graph.edges, category)) {
+  const targetExists = graph.nodes.some((node) => node.id === targetId)
+  if (!targetExists) return { found: false, path: [], visited: [], cycleDetected: false, reachable: false, reason: 'NODE_NOT_FOUND' }
+  if (!weakComponentFor(graph, startId, category).has(targetId)) {
+    return { found: false, path: [], visited: [], cycleDetected: false, reachable: false, reason: 'DISCONNECTED_COMPONENT' }
+  }
+
   const visited = new Set()
   const active = new Set()
   const path = []
@@ -97,5 +127,12 @@ export function depthFirstSearch(graph, startId, targetId, category = 'all') {
   }
 
   const found = visit(startId)
-  return { found, path: found ? path : [], visited: [...visited], cycleDetected }
+  return {
+    found,
+    path: found ? path : [],
+    visited: [...visited],
+    cycleDetected,
+    reachable: found,
+    reason: found ? null : 'NO_DIRECTED_PATH',
+  }
 }

@@ -3,12 +3,7 @@
 .brand-lockup { display: flex; align-items: center; gap: 7px; padding: 0 10px; color: var(--moss-dark); font-size: 20px; font-weight: 700; letter-spacing: 0; }
 .brand-mark { width: 25px; height: 25px; display: inline-grid; place-items: center; border-radius: 7px; color: #fffdf8; background: var(--coral); font: 600 19px/1 'Fraunces', Georgia, serif; }
 .brand-period { margin-left: -7px; color: var(--coral); }
-.workspace-switch { display: flex; align-items: center; gap: 10px; padding: 12px 10px; margin: 31px 0 29px; border: 1px solid #dedfd6; border-radius: 7px; background: rgba(255, 254, 250, .68); }
-.workspace-avatar, .user-avatar { width: 31px; height: 31px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #fffdf8; background: var(--moss); font-size: 10px; font-weight: 700; }
-.workspace-copy { min-width: 0; flex: 1; display: grid; gap: 1px; }
-.workspace-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-copy small { color: var(--muted); font-size: 10px; }
-.workspace-switch > svg { color: var(--muted); }
+.user-avatar { width: 31px; height: 31px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #fffdf8; background: var(--moss); font-size: 10px; font-weight: 700; }
 .primary-nav { display: grid; gap: 4px; }
 .nav-caption { padding: 0 11px 6px; color: #929991; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
 .nav-caption-spaced { margin-top: 26px; }
@@ -38,6 +33,11 @@
 .user-chip { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; font-size: 11px; font-weight: 600; }
 .user-chip > svg { color: var(--muted); }
 .user-avatar { width: 27px; height: 27px; background: #9e806a; font-size: 9px; }
+.account-menu-wrap { position: relative; }
+.account-menu { min-width: 154px; position: absolute; top: calc(100% + 11px); right: 0; z-index: 20; padding: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); animation: rise-in .14s ease both; }
+.account-menu button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 4px; color: #536158; background: transparent; cursor: pointer; text-align: left; font-size: 11px; }
+.account-menu button:hover { color: var(--ink); background: #f0f2eb; }
+.account-menu button:last-child:hover { color: #b54f43; background: #faf0ec; }
 .page-content { width: min(100%, 1390px); margin: 0 auto; padding: 39px 35px 45px; }
 .eyebrow { display: block; color: #818c82; font-size: 9px; font-weight: 700; letter-spacing: 1.25px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
@@ -198,6 +198,24 @@
 .graph-explainer p { flex: 1; margin: 0; color: #858e85; font-size: 9px; line-height: 1.5; }
 .graph-explainer p strong { margin-right: 5px; color: #596a5d; }
 .graph-explainer .text-button { white-space: nowrap; font-size: 9px; }
+.connection-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 27px; border: 1px solid var(--line); border-radius: 6px; background: var(--line); overflow: hidden; }
+.connection-summary > div { min-height: 82px; display: grid; align-content: center; gap: 5px; padding: 12px 17px; background: rgba(255, 254, 250, .85); }
+.connection-summary strong { color: #35483b; font: 500 25px/1 'Fraunces', Georgia, serif; }
+.connection-summary span { color: #929a91; font-size: 8px; font-weight: 700; }
+.connections-section { margin-top: 30px; }
+.connection-total { color: #8d968e; font-size: 10px; }
+.connections-table { min-width: 580px; }
+.connection-state { display: inline-flex; min-height: 22px; align-items: center; padding: 0 8px; border-radius: 4px; color: #56715f; background: #eef4ec; font-size: 9px; font-weight: 600; }
+.connection-state.is-pending { color: #927538; background: #f8f4e8; }
+.pending-note { display: flex; align-items: center; gap: 7px; margin: 12px 2px; color: #839084; font-size: 10px; }
+.disconnected-message { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0 0; padding: 12px; border: 1px solid #ecd8cb; border-radius: 5px; color: #805b49; background: #fbf2eb; font-size: 10px; line-height: 1.5; }
+.disconnected-message svg { flex: 0 0 auto; color: #bd704f; }
+.profile-details { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 22px; margin-top: 30px; padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255, 254, 250, .82); }
+.profile-avatar { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 50%; color: #fffdf8; background: #9e806a; font-size: 16px; font-weight: 700; }
+.profile-details dl { display: grid; gap: 12px; margin: 0; }
+.profile-details dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
+.profile-details dt { color: #929a91; font-size: 10px; }
+.profile-details dd { min-width: 0; margin: 0; color: #39443d; font-size: 11px; overflow-wrap: anywhere; }
 .error-banner { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding: 9px 12px; border: 1px solid #efd1c4; border-radius: 5px; color: #9b5744; background: #fcf0e9; font-size: 10px; }
 .spinner { width: 15px; height: 15px; display: inline-block; border: 2px solid #ffffff65; border-top-color: currentColor; border-radius: 50%; animation: spin .7s linear infinite; }
 .spinner-dark { border-color: #dfe5dc; border-top-color: var(--moss); }
@@ -273,7 +291,7 @@
   .sidebar { width: 64px; align-items: center; padding: 18px 7px 12px; }
   .brand-lockup { gap: 0; padding: 0; font-size: 0; }
   .brand-mark { width: 29px; height: 29px; font-size: 20px; }
-  .brand-period, .workspace-switch, .nav-caption, .nav-item:not(.active) { display: none; }
+  .brand-period, .nav-caption, .nav-item:not(.active) { display: none; }
   .primary-nav { width: 100%; gap: 8px; margin-top: 44px; }
   .nav-item { min-height: 40px; justify-content: center; padding: 0; font-size: 0; }
   .nav-item.active { display: flex; }
